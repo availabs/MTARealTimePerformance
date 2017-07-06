@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<body>
+	<div class='controls'>
+		<span class='directionControl'>
+			<span >Direction</span>
+		</span>
+		
+		<span class='lineControl'>
+			<span >Line</span>
+		</span>
+	</div>
+	<div class='mareySchedule'>
+	</div>
+	<div class='trainTable'>
+	</div>
+<style>
+	.trainTable > table > thead> tr > th {
+		font-size: 8px;
+	}
+	.trainTable > table > tbody> tr > td {
+		font-size: 8px;
+	}
+	svg {
+  	  font: 10px sans-serif;
+	}
+
+	.axis path {
+	  display: none;
+	}
+
+	.axis line {
+	  stroke: #000;
+	  shape-rendering: crispEdges;
+	}
+
+	.station line {
+	  stroke: #ddd;
+	  stroke-dasharray: 1,1;
+	  shape-rendering: crispEdges;
+	}
+
+	.station text {
+	  text-anchor: end;
+	}
+
+	.train path {
+	  fill: none;
+	  stroke-width: 1.5px;
+	}
+
+	.train circle {
+	  stroke: #fff;
+	}
+</style>
+<script src="//d3js.org/d3.v4.min.js"></script>
+<script src="gtfsStops.js"></script>
+<script>
+	d3.csv("basicTripInfo.20170615.csv", (schedule) => {
+		console.log('sched', schedule)
+		schedule = schedule.map(d => {
+			var dates = ['ata','eta','gtfsrt_msg_timestamp','position_timestamp','sta']
+			// format dates in to js dates
+			dates.forEach(key=> {
+				if(d[key].length > 0){
+					var seconds = +d[key]
+					d[key] = new Date(0);
+					d[key].setUTCSeconds(seconds);
+				} else {
+					d[key] = null
+				}
+			})
+			return d
+		})
+		//sort by order mesages received
+		.sort((a,b) => {
+			b.gtfsrt_msg_timestamp - a.gtfsrt_msg_timestamp
+		})
+
+		var trains = {
+			'fourTrain': schedule.filter(d => d.route_id === '4'),
+			'fiveTrain': schedule.filter(d => d.route_id === '5'),
+			'sixTrain': schedule.filter(d => d.route_id === '6')
+		}
+
+		var lines = Object.keys(trains)
+		var activeLine = lines[1]
+		console.log('activeLine', activeLine)
+		var directions = [
+			{'val':'N', 'name':'Uptown'},
+			{'val':'S', 'name':'Downtown'}
+		]
+		var currentDirection = 'N'
+
+		var directionControl = d3.select('.directionControl')
+			.append('select')
+			.attr('class', 'dirControl')
+
+		directionControl
+			.selectAll('option')
+			.data(directions)
+			.enter()
+				.append('option')
+				.attr('value', d => { return d.val })
+				.text(d => { return d.name })
+
+		var lineControl = d3.select('.lineControl')
+			.append('select')
+			.attr('class', 'trainControl')
+
+		lineControl
+			.selectAll('option')
+			.data(lines)
+			.enter()
+				.append('option')
+				.attr('value', d => { return d })
+				.text(d => { return d })
+
+		lineControl.on('change',() =>{
+			activeLine = d3.select('.trainControl').property('value')
+			console.log('change line', activeLine, currentDirection)
+			var formattedData = formatInput(trains, activeLine, currentDirection)
+		
+			var tripList = formattedData.tripList
+			var tripTable = formattedData.tripTable
+			var stopTemplate = formattedData.stopTemplate
+
+	 		createTable(tripList, tripTable, stopTemplate)
+			createMareySchedule(tripList, tripTable, stopTemplate)
+
+		})
+
+		directionControl.on('change',() =>{
+			currentDirection = d3.select('.dirControl').property('value')
+			console.log('change direction', activeLine, currentDirection)
+			var formattedData = formatInput(trains, activeLine, currentDirection)
+		
+			var tripList = formattedData.tripList
+			var tripTable = formattedData.tripTable
+			var stopTemplate = formattedData.stopTemplate
+
+			
+
+	 		createTable(tripList, tripTable, stopTemplate)
+			createMareySchedule(tripList, tripTable, stopTemplate)
+
+		})
+
+
+		// render defaults on load
+		var formattedData = formatInput(trains, activeLine, currentDirection)
+		
+		// array of gtfsrt_key stringfor current line
+		// in order of start time
+		var tripList = formattedData.tripList 
+
+		//object with gtfsrt_key as keys
+		//with values containing full Data
+		var tripTable = formattedData.tripTable
+
+		// GTFS Data about STOPS
+		var stopTemplate = formattedData.stopTemplate
+		console.log(tripList, tripTable, stopTemplate)
+
+ 		createTable(tripList, tripTable, stopTemplate)
+		createMareySchedule(tripList, tripTable, stopTemplate) 
+	
+
+	})
+
+	function createMareySchedule(tripList, tripTable, stopTemplate) {
+		d3.select(".mareySchedule svg").remove()
+		var startTime = tripList[tripTable[0]].startTime
+		var endTime = tripList[tripTable[tripTable.length - 1]].startTime
+
+		var stations = []; // lazily loaded
+
+		var formatTime = d3.timeFormat("%I:%M%p");
+
+		var margin = {top: 20, right: 30, bottom: 20, left: 150},
+		    width = 1440 - margin.left - margin.right,
+		    height = 600 - margin.top - margin.bottom;
+
+		var x = d3.scaleTime()
+		    .domain([startTime,endTime])
+		    .range([0, width]);
+
+		var y = d3.scaleLinear()
+		    .range([0, height]);
+
+		var z = d3.scaleLinear()
+			.domain([-60,0,60])
+			.range(["#99d594","#ffffbf","#fc8d59"])
+		    .interpolate(d3.interpolateLab);
+
+
+		var svg = d3.select(".mareySchedule").append("svg")
+		    .attr("width", width + margin.left + margin.right)
+		    .attr("height", height + margin.top + margin.bottom)
+		  .append("g")
+		    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+		svg.append("defs").append("clipPath")
+		    .attr("id", "clip")
+		  .append("rect")
+		    .attr("y", -margin.top)
+		    .attr("width", width)
+		    .attr("height", height + margin.top + margin.bottom);
+
+		
+		var prevDistance = 0;
+		var getDistance = (x1,y1,x2,y2) => {
+			return Math.sqrt( Math.pow((x1-x2), 2) + Math.pow((y1-y2), 2) );
+		}
+
+		var stations = stopTemplate.map((station,i) => {
+			var prevStation = stopTemplate[i-1]
+			var distance = i === 0
+				? 0
+				: prevDistance + getDistance(station[2],station[3], prevStation[2], prevStation[3])
+			prevDistance = distance
+
+			return {
+				id: station[0],
+				name: station[1],
+				distance
+			}
+		})
+		var stationHash = stations.reduce((prev, curr) => {
+			prev[curr.id] = curr
+			return prev
+		},{})
+		//-------------------------------------------------
+		// Create Graph Layout & Axes
+		//-------------------------------------------------
+		y.domain(d3.extent(stations, function(d) { return d.distance; }));
+
+	  	var station = svg.append("g")
+		    .attr("class", "station")
+		    .selectAll("g")
+		    .data(stations)
+		    .enter().append("g")
+		    .attr("transform", function(d) { return "translate(0," + y(d.distance) + ")"; });
+
+		station.append("text")
+		    .attr("x", -6)
+		    .attr("dy", ".35em")
+		    .text(function(d) { return d.name; });
+
+		station.append("line")
+		    .attr("x2", width);
+
+
+		var xAxis = d3.axisTop()
+		    .scale(x)
+		    .ticks(8)
+		    .tickFormat(formatTime);
+
+		var xAxisBottom = d3.axisBottom()
+		    .scale(x)
+		    .ticks(8)
+		    .tickFormat(formatTime);
+		    
+ 		svg.append("g")
+	      .attr("class", "x top axis")
+	      .call(xAxis);
+
+	    svg.append("g")
+	      .attr("class", "x bottom axis")
+	      .attr("transform", "translate(0," + height + ")")
+	      .call(xAxisBottom);
+	    //-------------------------------------------------
+		// Create Train Lines and Stop points
+		//-------------------------------------------------
+
+		var train = svg.append("g")
+	      .attr("class", "train")
+	      .attr("clip-path", "url(#clip)")
+	    .selectAll("g")
+	      .data(tripTable)
+	    .enter().append("g")
+	      .attr("class", function(d) { return d });
+
+	  	train.selectAll("line")
+	      	.data(function(d) { 
+
+	      		var activeStations = stations.filter(station => tripList[d].stopOrder.indexOf(station.id) !== -1)
+	      		var tripData = activeStations
+		      		.map((station,i) =>{
+		      			if (i === 0) return null
+		      			return {
+		      				start: activeStations[i-1].distance,
+		      				arrival: tripList[d].tripStops[activeStations[i-1].id].arrivalTime,
+		      				end: station.distance,
+		      				departure: tripList[d].tripStops[station.id].arrivalTime,
+		      				timeDiff: tripList[d].tripStops[activeStations[i-1].id].timeDiff
+
+		      			}
+		      		})
+		      		.filter(d => d) // get rid of the null entry
+		      	return tripData
+	      	})
+		    .enter().append("line")
+			    .attr("x1", function(d,i) { return x(d.arrival); })
+			    .attr("x2", function(d) { return x(d.departure); })
+			    .attr("y1", function(d) { return y(d.start); })
+			    .attr("y2", function(d) { return y(d.end); })
+			    .style("stroke", function(d) { 
+				    return d.timeDiff ? z(d.timeDiff) : '#ddd'; 
+				});
+
+		train.selectAll("circle")
+	      	.data(function(d) { 
+
+	      		var activeStations = stations.filter(station => tripList[d].stopOrder.indexOf(station.id) !== -1)
+	      		var tripData = activeStations
+		      		.map((station,i) =>{
+		      			return {
+		      				end: station.distance,
+		      				departure: tripList[d].tripStops[station.id].arrivalTime,
+		      				timeDiff: tripList[d].tripStops[station.id].timeDiff
+
+		      			}
+		      		})
+		      	return tripData
+	      	})
+	    	.enter().append("circle")
+	     	.attr("transform", function(d) { 
+	     		return "translate(" + x(d.departure) + "," + y(d.end) + ")"; })
+	      	.attr("r", 2)
+	      	.style("fill", function(d) {
+			    return d.timeDiff ? z(d.timeDiff) : '#ddd'; 
+			});
+
+	}
+
+	function createTable(tripList, tripTable, stopTemplate){
+		d3.select(".trainTable table").remove()
+		stopTemplate.unshift(['','Trip Id']) // add gtfs
+		var table = d3.select('.trainTable').append('table')
+		var header = table.append('thead')
+		var body = table.append('tbody')
+		header
+			.append('tr')
+			.selectAll('th')
+			.data(stopTemplate)
+			.enter()
+			.append('th')
+				.text(function(col) { 
+					return col[1] 
+				})
+
+		var colorScale = d3.scaleLinear()
+			.domain([-60,0,60])
+			.range(["#99d594","#ffffbf","#fc8d59"])
+			.interpolate(d3.interpolateLab);
+
+		stopTemplate.shift() 
+		body
+			.selectAll('tr')
+			.data(tripTable)
+			.enter()
+			.append('tr')
+				.html(function(tripId) {
+					// console.log('row', tripId, tripList[tripId])
+					var cols = `<td>${tripId}</td>`
+					var stops = stopTemplate.map(stop => {
+						var tripStop = tripList[tripId] && tripList[tripId].tripStops[stop[0]] 
+							? tripList[tripId].tripStops[stop[0]] : null
+						var stopTime = tripStop && tripStop.arrivalTime ? tripStop.arrivalTime.toTimeString().split(' ')[0] : ''
+						var stopColor = tripStop && tripStop.timeDiff ? colorScale(tripStop.timeDiff) : '#ddd'
+						var style = `style="background-color: ${stopColor}"`
+						return `<td ${style}>${stopTime}</td>`
+					})
+					cols += stops.join('')
+					return cols
+				})
+
+	}
+
+	function formatInput(trains, activeLine, currentDirection) {
+			var trips = trains[activeLine].reduce((prev, curr) => {
+				if(!prev[curr.gtfsrt_key]) { prev[curr.gtfsrt_key] = [] }
+				prev[curr.gtfsrt_key].push(curr)
+				return prev
+			},{})
+
+			var stops = trains[activeLine].reduce((prev, curr) => {
+				if(prev.indexOf(curr.stop_id) === -1) {
+					prev.push(curr.stop_id)
+				}
+				return prev
+			},[])
+			console.log('all stops', activeLine, stops)
+
+			var tripList = Object.keys(trips).reduce((prev,currentTrip) => {
+				var tripStops = trips[currentTrip].reduce((prev, curr) => {
+					if( ! prev[curr.stop_id] ) {
+						prev[curr.stop_id] = []
+					}
+					if(curr.ata || curr.eta) {
+						// gtfsr update must arrive or have eta
+						// for next stop or its not included
+						prev[curr.stop_id].push(curr)
+					}
+					return prev
+				},{})
+				Object.keys(tripStops).forEach(stopId => {
+
+					var lastMessage = tripStops[stopId][tripStops[stopId].length - 1]
+					if(lastMessage) {
+						var arrivalTime = lastMessage.ata ? lastMessage.ata : lastMessage.eta
+						var scheduledTime = lastMessage.sta
+						tripStops[stopId] = {arrivalTime, scheduledTime, timeDiff: ((arrivalTime - scheduledTime) / 1000)}
+					} else {
+						// There is never an arrival time at this stop 
+						// so remove it from the trip
+						delete tripStops[stopId]
+					}
+
+				})
+				var stopOrder = Object.keys(tripStops).sort((a,b) => {
+					return b.arrivalTime - a.arrivalTime
+				})
+				if(Object.keys(stopOrder).length > 0) {
+					prev[currentTrip] = {
+						stopOrder,
+						tripStops,
+						firstStop: stopOrder[0],
+						lastStop: stopOrder[stopOrder.length - 1],
+						direction: stopOrder[0][stopOrder[0].length - 1], //last char of stopId indicates direction
+						numStops: stopOrder.length,
+						startTime: tripStops[stopOrder[0]].arrivalTime,
+						endTime: tripStops[stopOrder[stopOrder.length -1]].arrivalTime
+					}
+				}
+				return prev
+			},{})
+			
+			
+			var tripTable = Object.keys(tripList)
+				.filter(tripId => tripList[tripId].direction === currentDirection && tripList[tripId].numStops > 1)
+				.sort((a,b) => tripList[a].startTime - tripList[b].startTime)
+			
+			// get stops template from gtfs 
+			var stopTemplate = stopTables[activeLine][currentDirection]
+			
+			return {
+				tripList,
+				tripTable,
+				stopTemplate
+			}
+		}
+
+</script>
+</body>
