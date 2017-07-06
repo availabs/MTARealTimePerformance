@@ -78,13 +78,14 @@
 		})
 
 		var trains = {
-			'fourTrain': schedule.filter(d => d.route_id === '4'),
+			'sixTrain': schedule.filter(d => d.route_id === '6'),
 			'fiveTrain': schedule.filter(d => d.route_id === '5'),
-			'sixTrain': schedule.filter(d => d.route_id === '6')
+			'fourTrain': schedule.filter(d => d.route_id === '4')
+			
 		}
 
 		var lines = Object.keys(trains)
-		var activeLine = lines[2]
+		var activeLine = lines[0]
 		console.log('activeLine', activeLine)
 		var directions = [
 			{'val':'N', 'name':'Uptown'},
